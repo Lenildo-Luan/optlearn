@@ -1,6 +1,22 @@
-// https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
-  compatibilityDate: '2025-05-15',
-  devtools: { enabled: true },
-  modules: ['@nuxt/eslint', '@nuxt/test-utils']
+  modules: [
+    '@nuxtjs/tailwindcss',
+    [
+      '@nuxtjs/google-fonts',
+      {
+        families: {
+          Inter: [400, 500, 600, 700]
+        }
+      }
+    ]
+  ],
+  runtimeConfig: {
+    public: {
+      supabaseUrl: process.env.SUPABASE_URL,
+      supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
+      googleClientId: process.env.GOOGLE_CLIENT_ID,
+      githubClientId: process.env.GITHUB_CLIENT_ID
+    }
+  },
+  css: ['~/assets/css/main.css']
 })
