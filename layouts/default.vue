@@ -17,6 +17,7 @@
               <BaseButton
                 variant="outline"
                 size="sm"
+                :loading="signingOut"
                 @click="handleSignOut"
               >
                 Sair
@@ -46,24 +47,45 @@
 </template>
 
 <script setup lang="ts">
-const { getCurrentUser } = useAuth()
-const { $supabase } = useNuxtApp()
+import type { User } from "@supabase/supabase-js"
+const { getCurrentUser, signOut } = useAuth()
 const router = useRouter()
 
-const user = ref(null)
+
+const user = ref<User | null>(null)
+const signingOut = ref(false)
 
 const handleSignOut = async () => {
-  await $supabase.auth.signOut()
-  user.value = null
-  await router.push('/')
+  signingOut.value = true
+  
+  try {
+    await signOut()
+    user.value = null
+    await router.push('/')
+  } catch (error) {
+    console.error('Error signing out:', error)
+  } finally {
+    signingOut.value = false
+  }
 }
 
 onMounted(async () => {
   user.value = await getCurrentUser()
   
   // Listen for auth state changes
+  const { $supabase } = useNuxtApp()
   $supabase.auth.onAuthStateChange((event, session) => {
     user.value = session?.user || null
+    
+    // Handle automatic token refresh
+    if (event === 'TOKEN_REFRESHED') {
+      console.log('Token refreshed successfully')
+    }
+    
+    // Handle sign out
+    if (event === 'SIGNED_OUT') {
+      user.value = null
+    }
   })
 })
 </script>

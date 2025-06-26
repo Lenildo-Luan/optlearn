@@ -18,5 +18,11 @@ export default defineNuxtConfig({
       githubClientId: process.env.GITHUB_CLIENT_ID
     }
   },
-  css: ['~/assets/css/main.css']
+  css: ['~/assets/css/main.css'],
+  components: [
+    {
+      path: '~/components',
+      pathPrefix: false,
+    },
+  ],
 })

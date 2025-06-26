@@ -57,6 +57,8 @@
 </template>
 
 <script setup lang="ts">
+import type { User } from "@supabase/supabase-js"
+
 definePageMeta({
   middleware: 'auth'
 })
@@ -68,7 +70,7 @@ useSeoMeta({
 })
 
 const { getCurrentUser } = useAuth()
-const user = ref(null)
+const user = ref<User | null>(null)
 
 const handleStartLearning = () => {
   // Navigate to roadmap or first lesson

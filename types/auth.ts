@@ -4,6 +4,12 @@ export interface SignUpData {
   confirmPassword?: string
 }
 
+export interface SignInData {
+  email: string
+  password: string
+  rememberMe?: boolean
+}
+
 export interface AuthResponse {
   success: boolean
   message: string
