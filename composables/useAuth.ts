@@ -1,10 +1,13 @@
+// composables/useAuth.ts
 import type { User } from "@supabase/supabase-js"
-import type { AuthResponse, SignUpData, SignInData } from "~/types/auth"
+import type { AuthResponse, SignUpData } from "~/types/auth"
+import { useUser } from "./useUser"
 
 export const useAuth = () => {
   const { $supabase } = useNuxtApp()
-  const user = ref<User | null>(null)
+  const { user, clearUser, refreshUser } = useUser()
   const loading = ref(false)
+  const router = useRouter()
 
   const signUp = async (data: SignUpData): Promise<AuthResponse> => {
     loading.value = true
@@ -33,6 +36,9 @@ export const useAuth = () => {
         }
       }
 
+      // Atualiza o estado do usuário após signup bem-sucedido
+      await refreshUser()
+
       return {
         success: true,
         message: 'Conta criada com sucesso!'
@@ -48,42 +54,29 @@ export const useAuth = () => {
     }
   }
 
-  const signIn = async (data: SignInData): Promise<AuthResponse> => {
+  const signIn = async (email: string, password: string): Promise<AuthResponse> => {
     loading.value = true
     
     try {
-      const { data: authData, error } = await $supabase.auth.signInWithPassword({
-        email: data.email,
-        password: data.password
+      const { data, error } = await $supabase.auth.signInWithPassword({
+        email,
+        password
       })
 
       if (error) {
         return {
           success: false,
-          message: 'Erro ao fazer login',
+          message: 'Credenciais inválidas',
           error: error.message
         }
       }
 
-      if (authData.user) {
-        user.value = authData.user
-        
-        // Store remember me preference
-        if (data.rememberMe) {
-          localStorage.setItem('rememberMe', 'true')
-        } else {
-          localStorage.removeItem('rememberMe')
-        }
-        
-        return {
-          success: true,
-          message: 'Login realizado com sucesso!'
-        }
-      }
+      // Atualiza o estado do usuário após login bem-sucedido
+      await refreshUser()
 
       return {
-        success: false,
-        message: 'Erro no login'
+        success: true,
+        message: 'Login realizado com sucesso!'
       }
     } catch (error: any) {
       return {
@@ -143,10 +136,13 @@ export const useAuth = () => {
           error: error.message
         }
       }
+
+      // Limpa o estado do usuário
+      clearUser()
       
-      user.value = null
-      localStorage.removeItem('rememberMe')
-      
+      // Redireciona para home
+      await router.push('/')
+
       return {
         success: true,
         message: 'Logout realizado com sucesso!'
@@ -162,25 +158,35 @@ export const useAuth = () => {
     }
   }
 
-  const getCurrentUser = async () => {
-    const { data: { user: currentUser } } = await $supabase.auth.getUser()
-    user.value = currentUser
-    return currentUser
+  const getCurrentUser = async (): Promise<User | null> => {
+    try {
+      const { data: { user: currentUser }, error } = await $supabase.auth.getUser()
+      
+      if (error) {
+        console.error('Erro ao obter usuário atual:', error)
+        return null
+      }
+      
+      return currentUser
+    } catch (error) {
+      console.error('Erro inesperado ao obter usuário:', error)
+      return null
+    }
   }
 
-  const refreshSession = async () => {
+  const refreshSession = async (): Promise<boolean> => {
     try {
       const { data, error } = await $supabase.auth.refreshSession()
-      if (error) {
-        console.error('Error refreshing session:', error)
+      
+      if (error || !data.session) {
+        console.error('Erro ao renovar sessão:', error)
         return false
       }
-      if (data.user) {
-        user.value = data.user
-      }
+
+      await refreshUser()
       return true
     } catch (error) {
-      console.error('Error refreshing session:', error)
+      console.error('Erro inesperado ao renovar sessão:', error)
       return false
     }
   }
