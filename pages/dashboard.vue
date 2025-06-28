@@ -192,6 +192,7 @@
 
 <script setup lang="ts">
 import type { User } from '@supabase/supabase-js'
+import { useSessionManager } from '~/utils/sessionManager'
 
 definePageMeta({
   middleware: 'auth'
@@ -207,6 +208,7 @@ useSeoMeta({
 const { getCurrentUser } = useAuth()
 const { $supabase } = useNuxtApp()
 const router = useRouter()
+const { sessionManager } = useSessionManager()
 
 // Reactive state
 const user = ref<User | null>(null)
@@ -337,6 +339,13 @@ onMounted(async () => {
   
   // Check initial auth status
   await checkAuthStatus()
+
+  user.value = await getCurrentUser()
+
+   // Inicializar gerenciamento de sessão
+  sessionManager.scheduleWarning = (session) => {
+    sessionManager.scheduleWarning(session)
+  }
 })
 
 // Cleanup

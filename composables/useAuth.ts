@@ -156,44 +156,27 @@ export const useAuth = () => {
     }
   }
 
-  /**
-   * Refresh the current session
-   */
-  const refreshSession = async (): Promise<AuthResponse> => {
+  const checkSession = async (): Promise<boolean> => {
     try {
-      const { data, error } = await $supabase.auth.refreshSession()
+      const { data: { session }, error } = await $supabase.auth.getSession()
+      return !error && !!session
+    } catch {
+      return false
+    }
+  }
+
+  const refreshSession = async (): Promise<{ success: boolean }> => {
+    loading.value = true
+    try {
+      const { data: { session }, error } = await $supabase.auth.refreshSession()
+      if (error || !session) return { success: false }
       
-      if (error) {
-        console.error('Session refresh failed:', error)
-        return {
-          success: false,
-          message: 'Falha ao renovar sessão',
-          error: error.message
-        }
-      }
-
-      if (data.session) {
-        session.value = data.session
-        user.value = data.session.user
-        updateSessionStatus(data.session)
-        
-        return {
-          success: true,
-          message: 'Sessão renovada com sucesso'
-        }
-      }
-
-      return {
-        success: false,
-        message: 'Não foi possível renovar a sessão'
-      }
-    } catch (error: any) {
-      console.error('Unexpected error during session refresh:', error)
-      return {
-        success: false,
-        message: 'Erro inesperado ao renovar sessão',
-        error: error.message
-      }
+      user.value = session.user
+      return { success: true }
+    } catch {
+      return { success: false }
+    } finally {
+      loading.value = false
     }
   }
 
@@ -456,6 +439,7 @@ export const useAuth = () => {
     return `${seconds}s`
   }
 
+
   // Cleanup on unmount
   onUnmounted(() => {
     stopSessionMonitoring()
@@ -478,12 +462,13 @@ export const useAuth = () => {
     signIn,
     signInWithOAuth,
     signOut,
-    getCurrentUser,
-    
+    getCurrentUser,   
+
     // Session management
     refreshSession,
     isSessionValid,
     initialize,
+    checkSession, 
     
     // Utilities
     handleHttpAuthError,

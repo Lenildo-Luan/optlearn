@@ -5,7 +5,7 @@ export interface AuthGuardOptions {
   redirectTo?: string
   requireAuth?: boolean
   allowedRoles?: string[]
-  onSuccess?: (user: User) => void
+  onSuccess?: (user: User | null) => void
   onFailure?: (error?: string) => void
 }
 

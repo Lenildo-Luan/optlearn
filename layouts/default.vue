@@ -65,6 +65,7 @@
 
 <script setup lang="ts">
 import type { User } from "@supabase/supabase-js"
+import { useSessionManager } from '~/utils/sessionManager'
 
 interface SessionAlert {
   show: boolean
@@ -72,6 +73,10 @@ interface SessionAlert {
   title: string
   message?: string
 }
+
+const { sessionManager, getTimeUntilExpiration } = useSessionManager()
+const showSessionWarning = ref(false)
+const sessionTimeLeft = ref(0)
 
 const { getCurrentUser } = useAuth()
 const { $supabase } = useNuxtApp()
@@ -274,6 +279,7 @@ watch(() => route.path, async (newPath) => {
 
 // Lifecycle
 onMounted(async () => {
+  
   // Initialize auth state
   await initializeAuth()
   
@@ -282,6 +288,30 @@ onMounted(async () => {
   
   // Start periodic session validation
   startSessionValidation()
+
+  user.value = await getCurrentUser()
+  
+  // Listen for auth state changes
+  $supabase.auth.onAuthStateChange((event, session) => {
+    user.value = session?.user || null
+    
+    if (session) {
+      sessionManager.scheduleWarning(session)
+    }
+  })
+  
+  // Setup session warning handlers
+  if (process.client) {
+    window.addEventListener('session-warning', (event: any) => {
+      sessionTimeLeft.value = event.detail.timeLeft
+      showSessionWarning.value = true
+    })
+    
+    window.addEventListener('session-expired', () => {
+      showSessionWarning.value = false
+      // Redirect handled by middleware
+    })
+  }
   
   // Cleanup on unmount
   onUnmounted(() => {
