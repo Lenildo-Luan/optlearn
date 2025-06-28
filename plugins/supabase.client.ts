@@ -19,10 +19,6 @@ export default defineNuxtPlugin(() => {
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
-        // Reduce token refresh buffer to 60 seconds (default is 600)
-        refreshTokenBuffer: 60,
-        // Attempt to refresh token 60 seconds before expiry
-        expiryMargin: 60
       },
       global: {
         headers: {

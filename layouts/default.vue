@@ -1,327 +1,298 @@
 <template>
   <div class="min-h-screen bg-gray-50">
+    <!-- Navigation Bar -->
     <nav class="bg-white shadow-sm border-b border-gray-200">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex justify-between h-16">
+          <!-- Logo -->
           <div class="flex items-center">
             <NuxtLink to="/" class="text-xl font-bold text-gray-900">
               DevLearn Platform
             </NuxtLink>
           </div>
           
-          <div class="flex items-center space-x-4">
-            <template v-if="isAuthLoading">
-              <!-- Loading state -->
-              <div class="animate-pulse">
-                <div class="h-8 w-20 bg-gray-200 rounded"></div>
-              </div>
-            </template>
-            <template v-else-if="user">
-              <span class="text-sm text-gray-700">
-                Olá, {{ user.email }}
-              </span>
-              <BaseButton
-                variant="outline"
-                size="sm"
-                :loading="isSigningOut"
-                @click="handleSignOut"
-              >
-                Sair
-              </BaseButton>
-            </template>
-            <template v-else>
-              <NuxtLink to="/signin">
-                <BaseButton variant="ghost" size="sm">
-                  Entrar
-                </BaseButton>
-              </NuxtLink>
-              <NuxtLink to="/signup">
-                <BaseButton variant="primary" size="sm">
-                  Criar Conta
-                </BaseButton>
-              </NuxtLink>
-            </template>
-          </div>
+          <!-- Auth Status Bar -->
+          <AuthStatusBar
+            :user="user"
+            :session-status="sessionStatus"
+            :session-expires-in="sessionExpiresIn"
+            :refreshing="refreshingSession"
+            @sign-out="handleSignOut"
+            @refresh-session="handleRefreshSession"
+          />
         </div>
       </div>
     </nav>
     
+    <!-- Session Warning Banner (appears when session is expiring soon) -->
+    <div
+      v-if="showSessionBanner"
+      class="bg-yellow-50 border-b border-yellow-200"
+    >
+      <div class="max-w-7xl mx-auto py-2 px-4 sm:px-6 lg:px-8">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center">
+            <svg class="h-5 w-5 text-yellow-400 mr-2" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+            </svg>
+            <p class="text-sm text-yellow-800">
+              Sua sessão expira em {{ formatTime(sessionExpiresIn) }}
+            </p>
+          </div>
+          <div class="flex items-center space-x-2">
+            <BaseButton
+              variant="outline"
+              size="sm"
+              :loading="refreshingSession"
+              @click="handleRefreshSession"
+            >
+              Renovar Sessão
+            </BaseButton>
+            <button
+              @click="dismissSessionBanner"
+              class="text-yellow-400 hover:text-yellow-500"
+            >
+              <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Main Content -->
     <main>
       <slot />
     </main>
-
-    <!-- Alert for session expiration -->
-    <BaseAlert
-      v-if="sessionAlert.show"
-      :type="sessionAlert.type"
-      :title="sessionAlert.title"
-      :message="sessionAlert.message"
-      :show="sessionAlert.show"
-      dismissible
-      @dismiss="clearSessionAlert"
+    
+    <!-- Session Warning Modal -->
+    <SessionWarningModal
+      :show="showSessionModal"
+      :remaining-seconds="modalCountdown"
+      :initial-seconds="60"
+      @extend="handleExtendSession"
+      @logout="handleForceLogout"
     />
+    
+    <!-- Loading Overlay (during session refresh) -->
+    <div
+      v-if="refreshingSession"
+      class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-40"
+    >
+      <div class="bg-white rounded-lg p-6 shadow-lg">
+        <div class="flex items-center space-x-3">
+          <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+          <span class="text-gray-700">Renovando sessão...</span>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import type { User } from "@supabase/supabase-js"
-import { useSessionManager } from '~/utils/sessionManager'
-
-interface SessionAlert {
-  show: boolean
-  type: 'success' | 'error' | 'warning' | 'info'
-  title: string
-  message?: string
-}
-
-const { sessionManager, getTimeUntilExpiration } = useSessionManager()
-const showSessionWarning = ref(false)
-const sessionTimeLeft = ref(0)
+import type { User } from '@supabase/supabase-js'
 
 const { getCurrentUser } = useAuth()
 const { $supabase } = useNuxtApp()
 const router = useRouter()
-const route = useRoute()
 
 // Reactive state
 const user = ref<User | null>(null)
-const isAuthLoading = ref(true)
-const isSigningOut = ref(false)
-const authCheckInterval = ref<NodeJS.Timeout | null>(null)
+const sessionStatus = ref<'active' | 'warning' | 'expired' | 'loading'>('loading')
+const sessionExpiresIn = ref(0)
+const refreshingSession = ref(false)
+const showSessionModal = ref(false)
+const showSessionBanner = ref(false)
+const modalCountdown = ref(60)
+const bannerDismissed = ref(false)
 
-// Session alert state
-const sessionAlert = reactive<SessionAlert>({
-  show: false,
-  type: 'warning',
-  title: '',
-  message: ''
-})
+// Session monitoring
+let sessionCheckInterval: NodeJS.Timeout | null = null
+let modalCountdownInterval: NodeJS.Timeout | null = null
 
-// Protected routes that require authentication
-const protectedRoutes = ['/dashboard', '/profile', '/roadmap', '/settings']
+const formatTime = (seconds: number): string => {
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = seconds % 60
+  
+  if (minutes > 0) {
+    return `${minutes}m ${remainingSeconds}s`
+  }
+  return `${remainingSeconds}s`
+}
 
-// Check if current route is protected
-const isProtectedRoute = computed(() => {
-  return protectedRoutes.some(route => router.currentRoute.value.path.startsWith(route))
-})
-
-// Initialize auth state
-const initializeAuth = async () => {
+const checkSessionStatus = async () => {
   try {
-    isAuthLoading.value = true
+    const { data: { session }, error } = await $supabase.auth.getSession()
     
-    // Get current session
-    const { data: { session } } = await $supabase.auth.getSession()
-    user.value = session?.user || null
-    
-    // If on protected route and no user, redirect to signin
-    if (isProtectedRoute.value && !user.value) {
-      showSessionAlert('warning', 'Sessão expirada', 'Faça login novamente para continuar.')
-      await router.push(`/signin?redirect=${encodeURIComponent(route.fullPath)}`)
-    }
-  } catch (error) {
-    console.error('Error initializing auth:', error)
-    user.value = null
-    
-    if (isProtectedRoute.value) {
-      await router.push('/signin')
-    }
-  } finally {
-    isAuthLoading.value = false
-  }
-}
-
-// Handle auth state changes
-const handleAuthStateChange = (event: string, session: any) => {
-  const newUser = session?.user || null
-  const wasAuthenticated = !!user.value
-  const isNowAuthenticated = !!newUser
-  
-  user.value = newUser
-  
-  // Handle session expiration
-  if (wasAuthenticated && !isNowAuthenticated) {
-    handleSessionExpired()
-  }
-  
-  // Handle successful sign in
-  if (!wasAuthenticated && isNowAuthenticated) {
-    handleSuccessfulSignIn()
-  }
-  
-  // Handle sign out
-  if (event === 'SIGNED_OUT') {
-    handleSignedOut()
-  }
-}
-
-// Handle session expiration
-const handleSessionExpired = async () => {
-  if (isProtectedRoute.value) {
-    showSessionAlert('warning', 'Sessão expirada', 'Sua sessão expirou. Faça login novamente.')
-    
-    // Wait a moment before redirecting so user can see the alert
-    setTimeout(async () => {
-      await router.push(`/signin?redirect=${encodeURIComponent(route.fullPath)}`)
-    }, 2000)
-  }
-}
-
-// Handle successful sign in
-const handleSuccessfulSignIn = () => {
-  clearSessionAlert()
-  
-  // Check if there's a redirect parameter
-  const redirectTo = route.query.redirect as string
-  if (redirectTo) {
-    router.push(redirectTo)
-  }
-}
-
-// Handle sign out
-const handleSignedOut = () => {
-  clearSessionAlert()
-  
-  // If user was on a protected route, redirect to home
-  if (isProtectedRoute.value) {
-    router.push('/')
-  }
-}
-
-// Periodic session validation
-const startSessionValidation = () => {
-  // Check session validity every 5 minutes
-  authCheckInterval.value = setInterval(async () => {
-    try {
-      const { data: { session }, error } = await $supabase.auth.getSession()
-      
-      if (error) {
-        console.error('Session validation error:', error)
-        return
-      }
-      
-      // If we think we have a user but session is null
-      if (user.value && !session) {
-        handleSessionExpired()
-      }
-      
-      // Update user state
-      user.value = session?.user || null
-    } catch (error) {
-      console.error('Error during session validation:', error)
-    }
-  }, 5 * 60 * 1000) // 5 minutes
-}
-
-// Stop session validation
-const stopSessionValidation = () => {
-  if (authCheckInterval.value) {
-    clearInterval(authCheckInterval.value)
-    authCheckInterval.value = null
-  }
-}
-
-// Session alert helpers
-const showSessionAlert = (type: SessionAlert['type'], title: string, message?: string) => {
-  sessionAlert.show = true
-  sessionAlert.type = type
-  sessionAlert.title = title
-  sessionAlert.message = message
-}
-
-const clearSessionAlert = () => {
-  sessionAlert.show = false
-}
-
-// Handle sign out
-const handleSignOut = async () => {
-  try {
-    isSigningOut.value = true
-    
-    const { error } = await $supabase.auth.signOut()
-    
-    if (error) {
-      console.error('Sign out error:', error)
-      showSessionAlert('error', 'Erro ao sair', 'Não foi possível fazer logout. Tente novamente.')
+    if (error || !session) {
+      sessionStatus.value = 'expired'
+      user.value = null
       return
     }
     
-    // Clear user state
-    user.value = null
+    const expiresAt = new Date(session.expires_at! * 1000)
+    const now = new Date()
+    const timeUntilExpiry = Math.floor((expiresAt.getTime() - now.getTime()) / 1000)
     
-    // Show success message
-    showSessionAlert('success', 'Logout realizado', 'Você foi desconectado com sucesso.')
+    sessionExpiresIn.value = Math.max(0, timeUntilExpiry)
     
-    // Redirect to home after a brief delay
-    setTimeout(() => {
-      router.push('/')
-    }, 1500)
-    
+    if (timeUntilExpiry <= 0) {
+      sessionStatus.value = 'expired'
+      await handleSessionExpired()
+    } else if (timeUntilExpiry <= 300) { // 5 minutes
+      sessionStatus.value = 'warning'
+      
+      // Show banner if not dismissed and more than 2 minutes left
+      if (!bannerDismissed.value && timeUntilExpiry > 120) {
+        showSessionBanner.value = true
+      }
+      
+      // Show modal if less than 1 minute left
+      if (timeUntilExpiry <= 60 && !showSessionModal.value) {
+        showSessionModal.value = true
+        modalCountdown.value = timeUntilExpiry
+        startModalCountdown()
+      }
+    } else {
+      sessionStatus.value = 'active'
+      showSessionBanner.value = false
+      bannerDismissed.value = false
+    }
   } catch (error) {
-    console.error('Unexpected sign out error:', error)
-    showSessionAlert('error', 'Erro inesperado', 'Ocorreu um erro durante o logout.')
-  } finally {
-    isSigningOut.value = false
+    console.error('Error checking session status:', error)
+    sessionStatus.value = 'expired'
   }
 }
 
-// Watch for route changes to check protection
-watch(() => route.path, async (newPath) => {
-  const isNewRouteProtected = protectedRoutes.some(protectedRoute => 
-    newPath.startsWith(protectedRoute)
-  )
-  
-  if (isNewRouteProtected && !user.value && !isAuthLoading.value) {
-    showSessionAlert('warning', 'Acesso restrito', 'Você precisa estar logado para acessar esta página.')
-    await router.push(`/signin?redirect=${encodeURIComponent(newPath)}`)
+const startModalCountdown = () => {
+  if (modalCountdownInterval) {
+    clearInterval(modalCountdownInterval)
   }
-})
+  
+  modalCountdownInterval = setInterval(() => {
+    modalCountdown.value -= 1
+    if (modalCountdown.value <= 0) {
+      clearInterval(modalCountdownInterval!)
+      handleForceLogout()
+    }
+  }, 1000)
+}
+
+const handleSessionExpired = async () => {
+  showSessionModal.value = false
+  if (modalCountdownInterval) {
+    clearInterval(modalCountdownInterval)
+  }
+  
+  await $supabase.auth.signOut()
+  user.value = null
+  
+  // Show notification
+  if (process.client) {
+    alert('Sua sessão expirou. Você será redirecionado para a página de login.')
+  }
+  
+  await router.push('/signin?reason=session_expired')
+}
+
+const handleRefreshSession = async () => {
+  if (refreshingSession.value) return
+  
+  refreshingSession.value = true
+  
+  try {
+    const { data, error } = await $supabase.auth.refreshSession()
+    
+    if (error) {
+      throw error
+    }
+    
+    if (data.session) {
+      user.value = data.session.user
+      sessionStatus.value = 'active'
+      showSessionModal.value = false
+      showSessionBanner.value = false
+      bannerDismissed.value = false
+      
+      if (modalCountdownInterval) {
+        clearInterval(modalCountdownInterval)
+      }
+      
+      // Update session expiry time
+      await checkSessionStatus()
+    }
+  } catch (error) {
+    console.error('Error refreshing session:', error)
+    await handleSessionExpired()
+  } finally {
+    refreshingSession.value = false
+  }
+}
+
+const handleExtendSession = async () => {
+  await handleRefreshSession()
+}
+
+const handleSignOut = async () => {
+  if (sessionCheckInterval) {
+    clearInterval(sessionCheckInterval)
+  }
+  if (modalCountdownInterval) {
+    clearInterval(modalCountdownInterval)
+  }
+  
+  await $supabase.auth.signOut()
+  user.value = null
+  sessionStatus.value = 'expired'
+  showSessionModal.value = false
+  showSessionBanner.value = false
+  
+  await router.push('/')
+}
+
+const handleForceLogout = async () => {
+  await handleSignOut()
+  
+  if (process.client) {
+    alert('Sua sessão expirou automaticamente.')
+  }
+}
+
+const dismissSessionBanner = () => {
+  showSessionBanner.value = false
+  bannerDismissed.value = true
+}
 
 // Lifecycle
 onMounted(async () => {
-  
-  // Initialize auth state
-  await initializeAuth()
-  
-  // Set up auth state listener
-  const { data: { subscription } } = $supabase.auth.onAuthStateChange(handleAuthStateChange)
-  
-  // Start periodic session validation
-  startSessionValidation()
-
+  // Get initial user
   user.value = await getCurrentUser()
   
+  // Start session monitoring
+  await checkSessionStatus()
+  sessionCheckInterval = setInterval(checkSessionStatus, 30000) // Check every 30 seconds
+  
   // Listen for auth state changes
-  $supabase.auth.onAuthStateChange((event, session) => {
-    user.value = session?.user || null
-    
-    if (session) {
-      sessionManager.scheduleWarning(session)
+  $supabase.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'SIGNED_OUT') {
+      user.value = null
+      sessionStatus.value = 'expired'
+      showSessionModal.value = false
+      showSessionBanner.value = false
+    } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+      user.value = session?.user || null
+      await checkSessionStatus()
     }
-  })
-  
-  // Setup session warning handlers
-  if (process.client) {
-    window.addEventListener('session-warning', (event: any) => {
-      sessionTimeLeft.value = event.detail.timeLeft
-      showSessionWarning.value = true
-    })
-    
-    window.addEventListener('session-expired', () => {
-      showSessionWarning.value = false
-      // Redirect handled by middleware
-    })
-  }
-  
-  // Cleanup on unmount
-  onUnmounted(() => {
-    subscription?.unsubscribe()
-    stopSessionValidation()
   })
 })
 
-// Cleanup on unmount
 onUnmounted(() => {
-  stopSessionValidation()
+  if (sessionCheckInterval) {
+    clearInterval(sessionCheckInterval)
+  }
+  if (modalCountdownInterval) {
+    clearInterval(modalCountdownInterval)
+  }
 })
 </script>
