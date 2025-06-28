@@ -1,17 +1,5 @@
-<!-- layouts/default.vue -->
 <template>
   <div class="min-h-screen bg-gray-50">
-    <!-- Loading overlay durante inicialização -->
-    <div
-      v-if="isLoading && !isInitialized"
-      class="fixed inset-0 bg-white bg-opacity-75 flex items-center justify-center z-50"
-    >
-      <div class="text-center">
-        <div class="animate-spin inline-block w-8 h-8 border-4 border-blue-500 border-r-transparent rounded-full mb-4"></div>
-        <p class="text-gray-600">Carregando...</p>
-      </div>
-    </div>
-
     <nav class="bg-white shadow-sm border-b border-gray-200">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex justify-between h-16">
@@ -22,36 +10,26 @@
           </div>
           
           <div class="flex items-center space-x-4">
-            <template v-if="isAuthenticated && user">
-              <div class="flex items-center space-x-3">
-                <!-- Avatar placeholder -->
-                <div class="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center">
-                  <span class="text-xs font-medium text-gray-700">
-                    {{ getInitials(user.email || '') }}
-                  </span>
-                </div>
-                
-                <div class="flex flex-col">
-                  <span class="text-sm font-medium text-gray-900">
-                    {{ user.email }}
-                  </span>
-                  <span class="text-xs text-gray-500">
-                    Online
-                  </span>
-                </div>
+            <template v-if="isAuthLoading">
+              <!-- Loading state -->
+              <div class="animate-pulse">
+                <div class="h-8 w-20 bg-gray-200 rounded"></div>
               </div>
-              
+            </template>
+            <template v-else-if="user">
+              <span class="text-sm text-gray-700">
+                Olá, {{ user.email }}
+              </span>
               <BaseButton
                 variant="outline"
                 size="sm"
-                :loading="signingOut"
+                :loading="isSigningOut"
                 @click="handleSignOut"
               >
                 Sair
               </BaseButton>
             </template>
-            
-            <template v-else-if="!isLoading">
+            <template v-else>
               <NuxtLink to="/signin">
                 <BaseButton variant="ghost" size="sm">
                   Entrar
@@ -72,97 +50,248 @@
       <slot />
     </main>
 
-    <!-- Toast de notificações -->
+    <!-- Alert for session expiration -->
     <BaseAlert
-      v-if="notification.show"
-      :type="notification.type"
-      :title="notification.title"
-      :message="notification.message"
-      :show="notification.show"
+      v-if="sessionAlert.show"
+      :type="sessionAlert.type"
+      :title="sessionAlert.title"
+      :message="sessionAlert.message"
+      :show="sessionAlert.show"
       dismissible
-      class="fixed top-4 right-4 z-40 max-w-sm"
-      @dismiss="clearNotification"
+      @dismiss="clearSessionAlert"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-const { signOut } = useAuth()
-import { useUser } from "~/composables/useUser"
-const { user, isAuthenticated, isLoading, isInitialized } = useUser()
-const router = useRouter()
+import type { User } from "@supabase/supabase-js"
 
-const signingOut = ref(false)
-const notification = reactive({
+interface SessionAlert {
+  show: boolean
+  type: 'success' | 'error' | 'warning' | 'info'
+  title: string
+  message?: string
+}
+
+const { getCurrentUser } = useAuth()
+const { $supabase } = useNuxtApp()
+const router = useRouter()
+const route = useRoute()
+
+// Reactive state
+const user = ref<User | null>(null)
+const isAuthLoading = ref(true)
+const isSigningOut = ref(false)
+const authCheckInterval = ref<NodeJS.Timeout | null>(null)
+
+// Session alert state
+const sessionAlert = reactive<SessionAlert>({
   show: false,
-  type: 'info' as 'info' | 'success' | 'error' | 'warning',
+  type: 'warning',
   title: '',
   message: ''
 })
 
-const getInitials = (email: string): string => {
-  return email.split('@')[0].charAt(0).toUpperCase()
-}
+// Protected routes that require authentication
+const protectedRoutes = ['/dashboard', '/profile', '/roadmap', '/settings']
 
-const showNotification = (type: 'success' | 'error' | 'warning' | 'info', title: string, message?: string) => {
-  notification.show = true
-  notification.type = type
-  notification.title = title
-  notification.message = message || ''
-}
-
-const clearNotification = () => {
-  notification.show = false
-}
-
-const handleSignOut = async () => {
-  signingOut.value = true
-  
-  try {
-    const response = await signOut()
-    
-    if (response.success) {
-      showNotification('success', 'Logout realizado', 'Você foi desconectado com sucesso.')
-    } else {
-      showNotification('error', 'Erro ao sair', response.message)
-    }
-  } catch (error) {
-    showNotification('error', 'Erro inesperado', 'Ocorreu um erro ao tentar sair.')
-  } finally {
-    signingOut.value = false
-  }
-}
-
-// Escuta erros de rota para exibir notificações
-router.onError((error) => {
-  console.error('Erro de rota:', error)
-  showNotification('error', 'Erro de navegação', 'Ocorreu um erro ao navegar.')
+// Check if current route is protected
+const isProtectedRoute = computed(() => {
+  return protectedRoutes.some(route => router.currentRoute.value.path.startsWith(route))
 })
 
-// Observa mudanças na query string para exibir mensagens
-watch(() => router.currentRoute.value.query, (newQuery) => {
-  if (newQuery.error) {
-    let errorMessage = 'Ocorreu um erro inesperado.'
+// Initialize auth state
+const initializeAuth = async () => {
+  try {
+    isAuthLoading.value = true
     
-    switch (newQuery.error) {
-      case 'session_error':
-        errorMessage = 'Erro ao verificar sua sessão. Faça login novamente.'
-        break
-      case 'token_expired':
-        errorMessage = 'Sua sessão expirou. Faça login novamente.'
-        break
-      case 'refresh_failed':
-        errorMessage = 'Falha ao renovar sessão. Faça login novamente.'
-        break
-      case 'auth_callback_failed':
-        errorMessage = 'Erro no processo de autenticação.'
-        break
+    // Get current session
+    const { data: { session } } = await $supabase.auth.getSession()
+    user.value = session?.user || null
+    
+    // If on protected route and no user, redirect to signin
+    if (isProtectedRoute.value && !user.value) {
+      showSessionAlert('warning', 'Sessão expirada', 'Faça login novamente para continuar.')
+      await router.push(`/signin?redirect=${encodeURIComponent(route.fullPath)}`)
+    }
+  } catch (error) {
+    console.error('Error initializing auth:', error)
+    user.value = null
+    
+    if (isProtectedRoute.value) {
+      await router.push('/signin')
+    }
+  } finally {
+    isAuthLoading.value = false
+  }
+}
+
+// Handle auth state changes
+const handleAuthStateChange = (event: string, session: any) => {
+  const newUser = session?.user || null
+  const wasAuthenticated = !!user.value
+  const isNowAuthenticated = !!newUser
+  
+  user.value = newUser
+  
+  // Handle session expiration
+  if (wasAuthenticated && !isNowAuthenticated) {
+    handleSessionExpired()
+  }
+  
+  // Handle successful sign in
+  if (!wasAuthenticated && isNowAuthenticated) {
+    handleSuccessfulSignIn()
+  }
+  
+  // Handle sign out
+  if (event === 'SIGNED_OUT') {
+    handleSignedOut()
+  }
+}
+
+// Handle session expiration
+const handleSessionExpired = async () => {
+  if (isProtectedRoute.value) {
+    showSessionAlert('warning', 'Sessão expirada', 'Sua sessão expirou. Faça login novamente.')
+    
+    // Wait a moment before redirecting so user can see the alert
+    setTimeout(async () => {
+      await router.push(`/signin?redirect=${encodeURIComponent(route.fullPath)}`)
+    }, 2000)
+  }
+}
+
+// Handle successful sign in
+const handleSuccessfulSignIn = () => {
+  clearSessionAlert()
+  
+  // Check if there's a redirect parameter
+  const redirectTo = route.query.redirect as string
+  if (redirectTo) {
+    router.push(redirectTo)
+  }
+}
+
+// Handle sign out
+const handleSignedOut = () => {
+  clearSessionAlert()
+  
+  // If user was on a protected route, redirect to home
+  if (isProtectedRoute.value) {
+    router.push('/')
+  }
+}
+
+// Periodic session validation
+const startSessionValidation = () => {
+  // Check session validity every 5 minutes
+  authCheckInterval.value = setInterval(async () => {
+    try {
+      const { data: { session }, error } = await $supabase.auth.getSession()
+      
+      if (error) {
+        console.error('Session validation error:', error)
+        return
+      }
+      
+      // If we think we have a user but session is null
+      if (user.value && !session) {
+        handleSessionExpired()
+      }
+      
+      // Update user state
+      user.value = session?.user || null
+    } catch (error) {
+      console.error('Error during session validation:', error)
+    }
+  }, 5 * 60 * 1000) // 5 minutes
+}
+
+// Stop session validation
+const stopSessionValidation = () => {
+  if (authCheckInterval.value) {
+    clearInterval(authCheckInterval.value)
+    authCheckInterval.value = null
+  }
+}
+
+// Session alert helpers
+const showSessionAlert = (type: SessionAlert['type'], title: string, message?: string) => {
+  sessionAlert.show = true
+  sessionAlert.type = type
+  sessionAlert.title = title
+  sessionAlert.message = message
+}
+
+const clearSessionAlert = () => {
+  sessionAlert.show = false
+}
+
+// Handle sign out
+const handleSignOut = async () => {
+  try {
+    isSigningOut.value = true
+    
+    const { error } = await $supabase.auth.signOut()
+    
+    if (error) {
+      console.error('Sign out error:', error)
+      showSessionAlert('error', 'Erro ao sair', 'Não foi possível fazer logout. Tente novamente.')
+      return
     }
     
-    showNotification('error', 'Erro de autenticação', errorMessage)
+    // Clear user state
+    user.value = null
     
-    // Remove o parâmetro de erro da URL
-    router.replace({ query: { ...newQuery, error: undefined } })
+    // Show success message
+    showSessionAlert('success', 'Logout realizado', 'Você foi desconectado com sucesso.')
+    
+    // Redirect to home after a brief delay
+    setTimeout(() => {
+      router.push('/')
+    }, 1500)
+    
+  } catch (error) {
+    console.error('Unexpected sign out error:', error)
+    showSessionAlert('error', 'Erro inesperado', 'Ocorreu um erro durante o logout.')
+  } finally {
+    isSigningOut.value = false
   }
-}, { immediate: true })
+}
+
+// Watch for route changes to check protection
+watch(() => route.path, async (newPath) => {
+  const isNewRouteProtected = protectedRoutes.some(protectedRoute => 
+    newPath.startsWith(protectedRoute)
+  )
+  
+  if (isNewRouteProtected && !user.value && !isAuthLoading.value) {
+    showSessionAlert('warning', 'Acesso restrito', 'Você precisa estar logado para acessar esta página.')
+    await router.push(`/signin?redirect=${encodeURIComponent(newPath)}`)
+  }
+})
+
+// Lifecycle
+onMounted(async () => {
+  // Initialize auth state
+  await initializeAuth()
+  
+  // Set up auth state listener
+  const { data: { subscription } } = $supabase.auth.onAuthStateChange(handleAuthStateChange)
+  
+  // Start periodic session validation
+  startSessionValidation()
+  
+  // Cleanup on unmount
+  onUnmounted(() => {
+    subscription?.unsubscribe()
+    stopSessionValidation()
+  })
+})
+
+// Cleanup on unmount
+onUnmounted(() => {
+  stopSessionValidation()
+})
 </script>
